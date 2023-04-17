@@ -1,0 +1,397 @@
+import pandas as pd
+
+df_param_all=pd.read_csv('Settings.csv')
+df_param_0_0=df_param_all[df_param_all['program']=='0-0_pre_setting'].iloc[:,1:].set_index('param_name')
+df_param_0_6=df_param_all[df_param_all['program']=='0-6_crop_image'].iloc[:,1:].set_index('param_name')
+df_param_1_1=df_param_all[df_param_all['program']=='1-1_center_classifier'].iloc[:,1:].set_index('param_name')
+
+#0-0 param
+im_width=float(df_param_0_0.at['im_width','value']) #全体画像サイズ,これの100倍 pix
+im_height=float(df_param_0_0.at['im_height','value'])
+dpi=float(df_param_0_0.at['dpi','value'])
+img_width=int(im_width*dpi)
+img_height=int(im_height*dpi)
+print('[IMAGE] ',f'im_width:{im_width}, im_height:{im_height}, dpi:{dpi}')
+
+#0-6 param
+window_size=int(df_param_0_6.at['window_size','value']) 
+window_slide=int(df_param_0_6.at['window_slide','value']) 
+window_width_num=(img_width-window_size)//window_slide+3
+window_height_num=(img_height-window_size)//window_slide+3
+#window_num=window_width_num*window_height_num
+window_num=1352
+print('[WINDOW] ',f'window_size:{window_size}, window_slide:{window_slide}')
+print(f'window_width_num:{window_width_num}, window_num:{window_num}')
+
+#1-1 param
+#resize_window_size=int(df_param_1_1.at['resize_window_size','value'])#固定でいい気がする
+resize_window_size=48
+N_EPOCHS=int(df_param_1_1.at['N_EPOCHS','value'])
+#MINI_SET_NUM=int(df_param_1_1.at['MINI_SET_NUM','value'])#ミニセット1つ当たりの元画像枚数
+batch_size_limit=int(df_param_1_1.at['batch_size_limit','value'])
+MINI_SET_NUM=500
+print('[BATCH] ',f'resize_window_size:{resize_window_size}, N_EPOCHS:{N_EPOCHS}, MINI_SET_NUM:{MINI_SET_NUM}, batch_size_limit:{batch_size_limit}')
+
+#file_name
+dir_all='output_image'
+dir_crop_img=dir_all+'/0-6_crop_image'
+dir_crop_diff=dir_all+'/0-6_crop_diff'
+dir_b_cen=dir_all+'/0-6_crop_classifier'
+dir_pred_classified=dir_all+'/2-1_pred_classified'
+
+#import
+import numpy as np
+from PIL import Image
+import glob
+import matplotlib.pyplot as plt
+from tensorflow import keras
+import tensorflow as tf
+import pandas as pd
+
+#batch_sizeを丁度良い数に決める．
+if window_num<=batch_size_limit:
+    batch_size=(batch_size_limit//window_num)*window_num
+elif window_num<=batch_size_limit*1.2:
+    batch_size=window_num
+else:
+    if window_num%2==0 and window_num/2<batch_size_limit*1.2:
+        batch_size=window_num//2
+    elif window_num%3==0 and window_num/3<batch_size_limit*1.2:
+        batch_size=window_num//3
+    elif window_num%4==0 and window_num/4<batch_size_limit*1.2:
+        batch_size=window_num//4
+    elif window_num%5==0 and window_num/5<batch_size_limit*1.2:
+        batch_size=window_num//5
+    elif window_num%6==0 and window_num/6<batch_size_limit*1.2:
+        batch_size=window_num//6
+    elif window_num%7==0 and window_num/7<batch_size_limit*1.2:
+        batch_size=window_num//7
+    else:
+        batch_size=1000
+print('window_num:',window_num,',   batch_size:',batch_size)
+
+#枚数取得
+import glob
+
+l=glob.glob(dir_crop_img+'/train/*')
+#train_num=len(l)
+train_num=500
+
+l=glob.glob(dir_crop_img+'/val/*')
+#val_num=len(l)
+val_num=50
+
+l=glob.glob(dir_crop_img+'/test/*')
+test_num=len(l)
+print('train:',train_num,',  val:',val_num,',  test:',test_num)
+
+#ディレクトリ作成
+import os
+def make_dir(dir_loc,dir_name):
+    save_dir=dir_loc+'/'+dir_name
+    try:os.mkdir(save_dir)
+    except:pass
+
+dir_list=['train','val','test']
+for data in dir_list:
+    make_dir(dir_pred_classified,data)
+    
+#imgの変換
+import cv2
+def image_read_translator(file):
+    #read
+    img= np.array(Image.open(file))
+    #resize
+    img_resize=cv2.resize(img, dsize=(resize_window_size, resize_window_size))
+    #gray_scale
+    gray=cv2.cvtColor(img_resize, cv2.COLOR_BGR2GRAY)
+    #rescale
+    norm_img=np.array(gray).astype("float32") / 255.0
+    return norm_img
+
+
+#train
+#crop_image読み込み,dir_nameのみ
+train_images=[]
+for k in range(train_num):
+    dir_train_img=dir_crop_img+'/train/train_image_'+str(k).zfill(6)+'/*'
+    data_train=glob.glob(dir_train_img)
+
+    for i in data_train:
+        train_images.append(i)
+
+#crop_image読み込み,dir_nameのみ
+train_diffs=[]
+for k in range(train_num):
+    dir_train_diff=dir_crop_diff+'/train/train_image_'+str(k).zfill(6)+'/*'
+    data_train=glob.glob(dir_train_diff)
+
+    for i in data_train:
+        train_diffs.append(i)
+        
+#val
+#crop_img,crop_diff読み込み
+#image変換しとく
+val_inputs=[]
+for k in range(val_num):
+    #image
+    dir_val_img=dir_crop_img+'/val/val_image_'+str(k).zfill(6)+'/*'
+    data_val_img=glob.glob(dir_val_img)
+    #diff
+    dir_val_diff=dir_crop_diff+'/val/val_image_'+str(k).zfill(6)+'/*'
+    data_val_diff=glob.glob(dir_val_diff)
+    
+    for i in range(len(data_val_img)):
+        img_i=image_read_translator(data_val_img[i])
+        diff_i=image_read_translator(data_val_diff[i])
+        val_input_i=np.stack([img_i,diff_i],axis=2)
+        val_inputs.append(val_input_i)
+#reshape        
+val_inputs=np.array(val_inputs).reshape(val_num*window_num, resize_window_size, resize_window_size, 2)
+
+
+#test(ignore)
+#crop_img,crop_diff読み込み
+
+test_inputs=[]
+if test_num>0:
+    #image変換しとく
+    for k in range(test_num):
+        #image
+        dir_test_img=dir_crop_img+'/test/test_image_'+str(k).zfill(6)+'/*'
+        data_test_img=glob.glob(dir_test_img)
+        #diff
+        dir_test_diff=dir_crop_diff+'/test/test_image_'+str(k).zfill(6)+'/*'
+        data_test_diff=glob.glob(dir_test_diff)
+
+        for i in range(len(data_test_img)):
+            img_i=image_read_translator(data_test_img[i])
+            diff_i=image_read_translator(data_test_diff[i])
+            test_input_i=np.stack([img_i,diff_i],axis=2)
+            test_inputs.append(test_input_i)
+    #reshape        
+    test_inputs=np.array(test_inputs).reshape(val_num*window_num, resize_window_size, resize_window_size, 2)
+
+
+#labels
+#data_train
+train_labels=[]
+for k in range(train_num):
+    dir_train_labels=dir_b_cen+'/train/train_image_'+str(k).zfill(6)+'.npy'
+    #train_labels=train_labels+np.load(dir_train_labels)
+    #print(np.load(dir_train_labels))
+    train_labels=np.concatenate([train_labels, np.load(dir_train_labels)], 0)
+
+
+#data_val
+val_labels=[]
+for k in range(val_num):
+    dir_val_labels=dir_b_cen+'/val/val_image_'+str(k).zfill(6)+'.npy'
+    #test_labels=test_labels+np.load(dir_test_labels)
+    val_labels=np.concatenate([val_labels, np.load(dir_val_labels)], 0)
+
+
+#サンプルplot
+#読み込み
+train_images_plt=[]
+for i in range(window_num):
+    train_images_plt.append(image_read_translator(train_images[i]))
+
+plt.figure(figsize=(20,10))
+for i in range(window_num):
+    plt.subplot(window_height_num-2,window_width_num-2,i+1) 
+    plt.xticks([])
+    plt.yticks([])
+    plt.imshow(train_images_plt[i], cmap='binary_r')
+    plt.xlabel(train_labels[i])
+
+#batchを取得する関数
+
+def get_batch(batch_size,input_images,input_diffs,input_labels):
+
+    #global train_images, train_labels
+    SIZE = len(input_images)
+    # n_batchs
+    n_batchs = SIZE//batch_size
+    # for でyield
+    i = 0
+    #print('SIZE:',SIZE,', window_num:'window_num,', batch_size:',batch_size,', n_batchs:',n_batchs)
+    print(SIZE)
+    while (i < n_batchs):
+        print("doing", i, "/", n_batchs)
+        Y_batch = input_labels[(i * n_batchs):(i * n_batchs + batch_size)]
+        
+        #あるbatchのfilenameの配列を持っておく
+        X_batch_img_name = input_images[(i * n_batchs):(i * n_batchs + batch_size)]
+        X_batch_diff_name = input_diffs[(i * n_batchs):(i * n_batchs + batch_size)]
+
+        # filenameにしたがってバッチのtensorを構築
+        X_batch=[]
+        for k in range(len(X_batch_img_name)):
+            img_k=image_read_translator(X_batch_img_name[k])
+            diff_k=image_read_translator(X_batch_diff_name[k])
+            input_k=np.stack([img_k,diff_k],axis=2)
+            X_batch.append(input_k)        
+        X_batch=np.array(X_batch).reshape(batch_size, resize_window_size, resize_window_size, 2)        
+        
+        # これで(batch_size, window_size, window_size, 1)のtrainのテンソルが作られる
+        i += 1
+        yield X_batch, Y_batch
+   
+from keras import layers
+from keras.layers import Input
+from keras.models import Model
+
+dropout_rate=0.3
+filter_num=32
+
+def make_model():
+    
+    inputs= Input(shape=(resize_window_size,resize_window_size,2))
+
+    x=layers.Conv2D(filter_num*2, (3,3),activation='relu',padding='same')(inputs)
+    #x=layers.MaxPooling2D(pool_size=(2,2))(x)
+    #x=layers.Dropout(dropout_rate)(x)
+    #x=layers.BatchNormalization()(x)
+
+    #x=layers.Conv2D(filter_num*2, (3,3),activation='relu',padding='same')(x)
+    x=layers.MaxPooling2D(pool_size=(2,2))(x)
+    x=layers.Dropout(dropout_rate)(x)
+    x=layers.BatchNormalization()(x)
+
+    x=layers.Conv2D(filter_num*4, (3,3),activation='relu',padding='same')(x)
+    x=layers.MaxPooling2D(pool_size=(2,2))(x)
+    x=layers.Dropout(dropout_rate)(x)
+    x=layers.BatchNormalization()(x)
+
+    x=layers.Conv2D(filter_num*8, (3,3),activation='relu',padding='same')(x)
+    x=layers.MaxPooling2D(pool_size=(2,2))(x)
+    x=layers.Dropout(dropout_rate)(x)
+    x=layers.BatchNormalization()(x)
+    
+    x=layers.Conv2D(filter_num*16, (3,3),activation='relu',padding='same')(x)
+    x=layers.MaxPooling2D(pool_size=(2,2))(x)
+    x=layers.Dropout(dropout_rate)(x)
+    x=layers.BatchNormalization()(x)
+
+    x=layers.Conv2D(filter_num*32, (3,3),activation='relu')(x)
+    x=layers.Dropout(dropout_rate)(x)
+    x=layers.BatchNormalization()(x)
+    
+    x=layers.Flatten()(x)
+    outputs=layers.Dense(1,  activation="sigmoid")(x)
+
+    model = Model(inputs=inputs, outputs=outputs)
+    
+    model.compile(optimizer='adam',
+              loss="binary_crossentropy",
+              metrics=["accuracy"])
+    
+    return model
+
+
+model=make_model()
+model.summary()
+
+
+keras.utils.plot_model(model,'center_classifier.png',show_shapes=True)
+
+
+#学習
+def train(train_input_images_mini,train_input_diffs_mini,train_labels_mini,total_epoch_i,mini_set_k):
+    print("=" * 50)
+    print('TOTAL EPOCH:',total_epoch_i,'/',N_EPOCHS,'  MINI SET:',mini_set_k,'/',train_num//MINI_SET_NUM)
+    acc ,loss= [],[]
+    
+    #load
+    model=keras.models.load_model('center_classifier_middle.h5')
+    
+    # MINISETの画像をbatch_sizeごとに取り出して，訓練
+    for X_batch, Y_batch in get_batch(batch_size,train_input_images_mini,train_input_diffs_mini,train_labels_mini):
+        model.train_on_batch(X_batch, Y_batch)
+        score = model.evaluate(X_batch, Y_batch)
+        print("batch accuracy:", score[1])
+        acc.append(score[1])
+        loss.append(score[0])    
+
+    history_train_acc.append(np.mean(acc))
+    history_train_loss.append(np.mean(loss))
+    
+    #save
+    model.save('center_classifier_middle.h5')
+    
+    #val
+    score = model.evaluate(val_inputs, val_labels)
+    print("Train accuracy", np.mean(acc))
+    print("val loss:", score[0])
+    print("Val accuracy:", score[1])
+    history_val_loss.append(score[0])
+    history_val_acc.append(score[1])
+    
+    global save_loss,save_acc,save_epoch,best_acc,best_epoch
+    if total_epoch_i>0 and save_loss>score[0]:
+        save_loss=score[0]
+        model.save('center_classifier_best.h5')
+        save_acc,save_epoch=score[1],(total_epoch_i,mini_set_k)
+        
+    if total_epoch_i>0 and best_acc<score[1]:
+        best_acc,best_epoch=score[1],(total_epoch_i,mini_set_k)
+        
+model=make_model() #一応初期化しておく
+model.save('center_classifier_middle.h5')
+
+save_loss,save_acc,save_epoch=10,0,(0,0)
+best_acc,best_epoch=0,(0,0)
+history_train_acc,history_val_acc,history_train_loss,history_val_loss=[],[],[],[]
+
+for total_epoch_i in range(N_EPOCHS):
+    #MINI SETの訓練
+    for mini_set_k in range(train_num//MINI_SET_NUM):
+        train_input_images_mini=train_images[mini_set_k*MINI_SET_NUM*window_num:(mini_set_k+1)*MINI_SET_NUM*window_num]
+        train_input_diffs_mini=train_diffs[mini_set_k*MINI_SET_NUM*window_num:(mini_set_k+1)*MINI_SET_NUM*window_num]
+        train_labels_mini=train_labels[mini_set_k*MINI_SET_NUM*window_num:(mini_set_k+1)*MINI_SET_NUM*window_num]  
+        train(train_input_images_mini,train_input_diffs_mini,train_labels_mini,total_epoch_i,mini_set_k)
+        
+print('Save_acc:',round(save_acc,4),' (Total epoch:',save_epoch[0],', Mini Set:',save_epoch[1],')       loss is minimum.')
+print('Best_acc:',round(best_acc,4),'  (Total epoch:',best_epoch[0],', Mini Set:',best_epoch[1],')')
+print('Batchsize:',batch_size,',  Total epoch:',N_EPOCHS)
+
+
+import matplotlib.pyplot as plt
+
+epochs=range(1,len(history_train_acc)+1)
+
+plt.plot(epochs,history_train_acc,'bo',label='Training acc')
+plt.plot(epochs,history_val_acc,'b',label='Validation acc')
+plt.title('Training and validation accuracy')
+plt.legend()
+
+plt.figure()
+
+plt.plot(epochs,history_train_loss,'bo',label='Training loss')
+plt.plot(epochs,history_val_loss,'b',label='Validation loss')
+plt.title('Training and validation loss')
+plt.legend()
+plt.show()
+
+
+#最善のエポックにおけるモデルを読み込み
+model=keras.models.load_model('center_classifier_best.h5')
+pred_labels_val=model.predict(val_inputs)
+
+#分類結果を保存
+#val
+for i in range(val_num):
+    #切り分け
+    num_i=i*window_num
+    save_labels=pred_labels_val[num_i:num_i+window_num]
+    array_label=[]
+    for label_k in  save_labels:
+        array_label.append(label_k[0])
+    save_label_i=np.array(array_label).reshape((window_width_num-2,window_height_num-2))
+    df_save_label=pd.DataFrame(save_label_i)
+
+    #保存
+    file_name='val/val_pred_classified_'+str(i).zfill(6)
+    save_dir=dir_pred_classified+'/'+file_name+'.csv'
+    df_save_label.to_csv(save_dir,header=None,index=None)
