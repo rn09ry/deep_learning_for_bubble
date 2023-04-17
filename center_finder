@@ -72,15 +72,12 @@ print('window_num:',window_num,',   batch_size:',batch_size)
 
 #枚数取得
 import glob
-
 l=glob.glob(dir_crop_img+'/train/*')
 #train_num=len(l)
 train_num=500
-
 l=glob.glob(dir_crop_img+'/val/*')
 #val_num=len(l)
 val_num=50
-
 l=glob.glob(dir_crop_img+'/test/*')
 test_num=len(l)
 print('train:',train_num,',  val:',val_num,',  test:',test_num)
@@ -116,16 +113,13 @@ train_images=[]
 for k in range(train_num):
     dir_train_img=dir_crop_img+'/train/train_image_'+str(k).zfill(6)+'/*'
     data_train=glob.glob(dir_train_img)
-
     for i in data_train:
         train_images.append(i)
-
 #crop_image読み込み,dir_nameのみ
 train_diffs=[]
 for k in range(train_num):
     dir_train_diff=dir_crop_diff+'/train/train_image_'+str(k).zfill(6)+'/*'
     data_train=glob.glob(dir_train_diff)
-
     for i in data_train:
         train_diffs.append(i)
         
@@ -139,8 +133,7 @@ for k in range(val_num):
     data_val_img=glob.glob(dir_val_img)
     #diff
     dir_val_diff=dir_crop_diff+'/val/val_image_'+str(k).zfill(6)+'/*'
-    data_val_diff=glob.glob(dir_val_diff)
-    
+    data_val_diff=glob.glob(dir_val_diff)    
     for i in range(len(data_val_img)):
         img_i=image_read_translator(data_val_img[i])
         diff_i=image_read_translator(data_val_diff[i])
@@ -152,7 +145,6 @@ val_inputs=np.array(val_inputs).reshape(val_num*window_num, resize_window_size, 
 
 #test(ignore)
 #crop_img,crop_diff読み込み
-
 test_inputs=[]
 if test_num>0:
     #image変換しとく
@@ -163,7 +155,6 @@ if test_num>0:
         #diff
         dir_test_diff=dir_crop_diff+'/test/test_image_'+str(k).zfill(6)+'/*'
         data_test_diff=glob.glob(dir_test_diff)
-
         for i in range(len(data_test_img)):
             img_i=image_read_translator(data_test_img[i])
             diff_i=image_read_translator(data_test_diff[i])
@@ -196,7 +187,6 @@ for k in range(val_num):
 train_images_plt=[]
 for i in range(window_num):
     train_images_plt.append(image_read_translator(train_images[i]))
-
 plt.figure(figsize=(20,10))
 for i in range(window_num):
     plt.subplot(window_height_num-2,window_width_num-2,i+1) 
@@ -205,10 +195,9 @@ for i in range(window_num):
     plt.imshow(train_images_plt[i], cmap='binary_r')
     plt.xlabel(train_labels[i])
 
+
 #batchを取得する関数
-
 def get_batch(batch_size,input_images,input_diffs,input_labels):
-
     #global train_images, train_labels
     SIZE = len(input_images)
     # n_batchs
@@ -220,11 +209,9 @@ def get_batch(batch_size,input_images,input_diffs,input_labels):
     while (i < n_batchs):
         print("doing", i, "/", n_batchs)
         Y_batch = input_labels[(i * n_batchs):(i * n_batchs + batch_size)]
-        
         #あるbatchのfilenameの配列を持っておく
         X_batch_img_name = input_images[(i * n_batchs):(i * n_batchs + batch_size)]
         X_batch_diff_name = input_diffs[(i * n_batchs):(i * n_batchs + batch_size)]
-
         # filenameにしたがってバッチのtensorを構築
         X_batch=[]
         for k in range(len(X_batch_img_name)):
@@ -232,16 +219,15 @@ def get_batch(batch_size,input_images,input_diffs,input_labels):
             diff_k=image_read_translator(X_batch_diff_name[k])
             input_k=np.stack([img_k,diff_k],axis=2)
             X_batch.append(input_k)        
-        X_batch=np.array(X_batch).reshape(batch_size, resize_window_size, resize_window_size, 2)        
-        
+        X_batch=np.array(X_batch).reshape(batch_size, resize_window_size, resize_window_size, 2)                
         # これで(batch_size, window_size, window_size, 1)のtrainのテンソルが作られる
         i += 1
         yield X_batch, Y_batch
-   
+  
+  
 from keras import layers
 from keras.layers import Input
 from keras.models import Model
-
 dropout_rate=0.3
 filter_num=32
 
@@ -292,8 +278,6 @@ def make_model():
 
 model=make_model()
 model.summary()
-
-
 keras.utils.plot_model(model,'center_classifier.png',show_shapes=True)
 
 
@@ -301,8 +285,7 @@ keras.utils.plot_model(model,'center_classifier.png',show_shapes=True)
 def train(train_input_images_mini,train_input_diffs_mini,train_labels_mini,total_epoch_i,mini_set_k):
     print("=" * 50)
     print('TOTAL EPOCH:',total_epoch_i,'/',N_EPOCHS,'  MINI SET:',mini_set_k,'/',train_num//MINI_SET_NUM)
-    acc ,loss= [],[]
-    
+    acc ,loss= [],[] 
     #load
     model=keras.models.load_model('center_classifier_middle.h5')
     
@@ -313,10 +296,8 @@ def train(train_input_images_mini,train_input_diffs_mini,train_labels_mini,total
         print("batch accuracy:", score[1])
         acc.append(score[1])
         loss.append(score[0])    
-
     history_train_acc.append(np.mean(acc))
-    history_train_loss.append(np.mean(loss))
-    
+    history_train_loss.append(np.mean(loss))   
     #save
     model.save('center_classifier_middle.h5')
     
@@ -344,6 +325,7 @@ save_loss,save_acc,save_epoch=10,0,(0,0)
 best_acc,best_epoch=0,(0,0)
 history_train_acc,history_val_acc,history_train_loss,history_val_loss=[],[],[],[]
 
+
 for total_epoch_i in range(N_EPOCHS):
     #MINI SETの訓練
     for mini_set_k in range(train_num//MINI_SET_NUM):
@@ -357,15 +339,13 @@ print('Best_acc:',round(best_acc,4),'  (Total epoch:',best_epoch[0],', Mini Set:
 print('Batchsize:',batch_size,',  Total epoch:',N_EPOCHS)
 
 
+
 import matplotlib.pyplot as plt
-
 epochs=range(1,len(history_train_acc)+1)
-
 plt.plot(epochs,history_train_acc,'bo',label='Training acc')
 plt.plot(epochs,history_val_acc,'b',label='Validation acc')
 plt.title('Training and validation accuracy')
 plt.legend()
-
 plt.figure()
 
 plt.plot(epochs,history_train_loss,'bo',label='Training loss')
@@ -373,7 +353,6 @@ plt.plot(epochs,history_val_loss,'b',label='Validation loss')
 plt.title('Training and validation loss')
 plt.legend()
 plt.show()
-
 
 #最善のエポックにおけるモデルを読み込み
 model=keras.models.load_model('center_classifier_best.h5')
